@@ -1,1 +1,5 @@
-data/sqlite/storage.db
+.env
+data/
+*.exe
+*.test
+coverage.out

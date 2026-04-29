@@ -1,21 +1,26 @@
 package telegram
 
 import (
+	"context"
 	"errors"
-	"project/clients/telegram"
+	"log/slog"
+
+	"project/clients/Telegram"
 	"project/events"
 	"project/lib/e"
-	"project/storage"
+	"project/service"
 )
 
 type Processor struct {
 	tg      *telegram.Client
 	offset  int
-	storage storage.Storage
+	service *service.LinkService
+	log     *slog.Logger
 }
 
 type Meta struct {
 	ChatID   int
+	UserID   int64
 	Username string
 }
 
@@ -24,15 +29,20 @@ var (
 	ErrUnknownMetaType  = errors.New("unknown meta type")
 )
 
-func New(client *telegram.Client, storage storage.Storage) *Processor {
+func New(client *telegram.Client, service *service.LinkService, log *slog.Logger) *Processor {
+	if log == nil {
+		log = slog.Default()
+	}
+
 	return &Processor{
 		tg:      client,
-		storage: storage,
+		service: service,
+		log:     log,
 	}
 }
 
-func (p *Processor) Fetch(limit int) ([]events.Event, error) {
-	updates, err := p.tg.Updates(p.offset, limit)
+func (p *Processor) Fetch(ctx context.Context, limit int) ([]events.Event, error) {
+	updates, err := p.tg.Updates(ctx, p.offset, limit)
 	if err != nil {
 		return nil, e.Wrap("can't get events", err)
 	}
@@ -52,23 +62,25 @@ func (p *Processor) Fetch(limit int) ([]events.Event, error) {
 	return res, nil
 }
 
-func (p *Processor) Process(event events.Event) error {
+func (p *Processor) Process(ctx context.Context, event events.Event) error {
 	switch event.Type {
 	case events.Message:
-		return p.processMessage(event)
+		return p.processMessage(ctx, event)
 	default:
 		return e.Wrap("can't process message", ErrUnknownEventType)
 	}
 }
 
-func (p *Processor) processMessage(event events.Event) error {
+func (p *Processor) processMessage(ctx context.Context, event events.Event) error {
 	meta, err := meta(event)
 
 	if err != nil {
 		return e.Wrap("can't process message", err)
 	}
 
-	if err := p.doCmd(event.Text, meta.ChatID, meta.Username); err != nil {
+	p.log.InfoContext(ctx, "incoming telegram message", "chat_id", meta.ChatID, "user_id", meta.UserID, "username", meta.Username)
+
+	if err := p.doCmd(ctx, event.Text, meta); err != nil {
 		return e.Wrap("can't process message", err)
 	}
 
@@ -95,6 +107,7 @@ func event(upd telegram.Update) events.Event {
 	if updType == events.Message {
 		res.Meta = Meta{
 			ChatID:   upd.Message.Chat.ID,
+			UserID:   upd.Message.From.ID,
 			Username: upd.Message.From.Username,
 		}
 	}

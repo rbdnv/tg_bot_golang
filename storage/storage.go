@@ -7,33 +7,51 @@ import (
 	"fmt"
 	"io"
 	"project/lib/e"
+	"time"
 )
 
 type Storage interface {
-	Save(ctx context.Context, p *Page) error
-	PickRandom(ctx context.Context, userName string) (*Page, error)
-	Remove(ctx context.Context, p *Page) error
-	IsExists(ctx context.Context, p *Page) (bool, error)
+	Init(ctx context.Context) error
+	SaveLink(ctx context.Context, userID int64, link string) error
+	GetRandomLink(ctx context.Context, userID int64) (string, error)
+	IncrementUserMessages(ctx context.Context, userID int64) (int, error)
+	CountUserMessages(ctx context.Context, userID int64) (int, error)
+	Close() error
 }
 
-var ErrNoSavedPages = errors.New("no saved pages")
-
+var (
+	ErrNoSavedPages  = errors.New("no saved pages")
+	ErrDuplicateLink = errors.New("duplicate link")
+)
 
 type Page struct {
-	URL      string
-	UserName string
+	UserID    int64
+	URL       string
+	UserName  string
+	Link      string
+	CreatedAt time.Time
 }
 
 func (p Page) Hash() (string, error) {
 	h := sha1.New()
 
-	if _, err := io.WriteString(h, p.URL); err!=nil{
+	if _, err := io.WriteString(h, firstNonEmpty(p.Link, p.URL)); err != nil {
 		return "", e.Wrap("can't calculate hash", err)
 	}
 
-	if _, err := io.WriteString(h, p.UserName); err!=nil{
+	if _, err := io.WriteString(h, fmt.Sprintf("%d:%s", p.UserID, p.UserName)); err != nil {
 		return "", e.Wrap("can't calculate hash", err)
 	}
 
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+
+	return ""
 }

@@ -1,32 +1,59 @@
 package files
 
 import (
+	"context"
 	"encoding/gob"
 	"errors"
-	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"project/lib/e"
 	"project/storage"
-	"time"
+	"strconv"
+	"sync"
 )
 
 type Storage struct {
 	basePath string
+	mu       sync.Mutex
+	counts   map[int64]int
 }
 
-const defaultPerm = 0774
+const defaultPerm = 0o774
 
-func New(basePath string) Storage {
-	return Storage{basePath: basePath}
+func New(basePath string) *Storage {
+	return &Storage{
+		basePath: basePath,
+		counts:   make(map[int64]int),
+	}
 }
 
-func (s Storage) Save(page *storage.Page) (err error) {
-	defer func() { err = e.WrapIfErr("can't save page", err) }()
+func (s *Storage) Init(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 
-	fPath := filepath.Join(s.basePath, page.UserName)
+	return os.MkdirAll(s.basePath, defaultPerm)
+}
 
+func (s *Storage) SaveLink(ctx context.Context, userID int64, link string) (err error) {
+	defer func() { err = e.WrapIfErr("save link", err) }()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	page := &storage.Page{
+		UserID: userID,
+		URL:    link,
+		Link:   link,
+	}
+
+	fPath := filepath.Join(s.basePath, userDir(userID))
 	if err := os.MkdirAll(fPath, defaultPerm); err != nil {
 		return err
 	}
@@ -37,6 +64,11 @@ func (s Storage) Save(page *storage.Page) (err error) {
 	}
 
 	fPath = filepath.Join(fPath, fName)
+	if _, err := os.Stat(fPath); err == nil {
+		return storage.ErrDuplicateLink
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 
 	file, err := os.Create(fPath)
 	if err != nil {
@@ -45,92 +77,82 @@ func (s Storage) Save(page *storage.Page) (err error) {
 
 	defer func() { _ = file.Close() }()
 
-	if err := gob.NewEncoder(file).Encode(page); err != nil {
-		return err
-	}
-	return nil
+	return gob.NewEncoder(file).Encode(page)
 }
 
-func (s Storage) PickRandom(userName string) (page *storage.Page, err error) {
-	defer func() { err = e.WrapIfErr("can't pick random page", err) }()
+func (s *Storage) GetRandomLink(ctx context.Context, userID int64) (link string, err error) {
+	defer func() { err = e.WrapIfErr("get random link", err) }()
 
-	path := filepath.Join(s.basePath, userName)
-
-	// 1. проверить список папок внутри storage и если его там нет, то сообщаем пользователю, что он ничего не сохранял
-
-	// Проверка, существует ли директория
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return nil, errors.New("the user did't save anything")
-	} else if err != nil {
-		return nil, e.Wrap("the error to check existing files", err)
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
 	}
 
+	path := filepath.Join(s.basePath, userDir(userID))
 	files, err := os.ReadDir(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", storage.ErrNoSavedPages
+	}
+
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	if len(files) == 0 {
-		return nil, storage.ErrNoSavedPages
+		return "", storage.ErrNoSavedPages
 	}
 
-	rand.Seed(time.Now().UnixNano())
-	n := rand.Intn(len(files))
+	file := files[rand.Intn(len(files))]
+	page, err := s.decodePage(filepath.Join(path, file.Name()))
+	if err != nil {
+		return "", err
+	}
 
-	file := files[n]
-
-	return s.decodePage(filepath.Join(path, file.Name()))
-
+	return firstNonEmpty(page.Link, page.URL), nil
 }
 
-func (s Storage) Remove(p *storage.Page) error {
-	fileName, err := fileName(p)
-	if err != nil {
-		return e.Wrap("can't remove file", err)
+func (s *Storage) IncrementUserMessages(ctx context.Context, userID int64) (int, error) {
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	default:
 	}
 
-	path := filepath.Join(s.basePath, p.UserName, fileName)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	if err := os.Remove(path); err != nil {
-		msg := fmt.Sprintf("can't remove file %s", path)
-		return e.Wrap(msg, err)
+	s.counts[userID]++
+	return s.counts[userID], nil
+}
+
+func (s *Storage) CountUserMessages(ctx context.Context, userID int64) (int, error) {
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	default:
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.counts[userID], nil
+}
+
+func (s *Storage) Close() error {
 	return nil
-
 }
 
-func (s Storage) IsExists(p *storage.Page) (bool, error) {
-	fileName, err := fileName(p)
-	if err != nil {
-		return false, e.Wrap("can't check if file exists", err)
-	}
-
-	path := filepath.Join(s.basePath, p.UserName, fileName)
-
-	switch _, err = os.Stat(path); {
-	case errors.Is(err, os.ErrNotExist):
-		return false, nil
-	case err != nil:
-		msg := fmt.Sprintf("can't check if file %s exists", path)
-
-		return false, e.Wrap(msg, err)
-	}
-
-	return true, nil
-}
-
-func (s Storage) decodePage(filePath string) (*storage.Page, error) {
+func (s *Storage) decodePage(filePath string) (*storage.Page, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
-		return nil, e.Wrap("can't decode page", err)
+		return nil, e.Wrap("decode page", err)
 	}
 	defer func() { _ = f.Close() }()
 
 	var p storage.Page
-
 	if err := gob.NewDecoder(f).Decode(&p); err != nil {
-		return nil, e.Wrap("can't decode page", err)
+		return nil, e.Wrap("decode page", err)
 	}
 
 	return &p, nil
@@ -139,3 +161,19 @@ func (s Storage) decodePage(filePath string) (*storage.Page, error) {
 func fileName(p *storage.Page) (string, error) {
 	return p.Hash()
 }
+
+func userDir(userID int64) string {
+	return strconv.FormatInt(userID, 10)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+var _ storage.Storage = (*Storage)(nil)

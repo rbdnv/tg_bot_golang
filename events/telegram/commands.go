@@ -3,11 +3,11 @@ package telegram
 import (
 	"context"
 	"errors"
-	"log"
-	"net/url"
-	"project/lib/e"
-	"project/storage"
 	"strings"
+
+	"project/lib/e"
+	"project/service"
+	"project/storage"
 )
 
 const (
@@ -16,97 +16,71 @@ const (
 	StartCmd = "/start"
 )
 
-func (p *Processor) doCmd(text string, chatID int, username string) error {
+func (p *Processor) doCmd(ctx context.Context, text string, meta Meta) error {
 	text = strings.TrimSpace(text)
-
-	log.Printf("got new command '%s' from '%s'", text, username)
-
-	// add page: http://...
-	// rnd page: /rnd
-	// help: /help
-	// start: /start: hi + help
-
-	// add page: http://...
-	if isAddCmd(text) {
-		return p.savePage(chatID, text, username)
-
-	}
 
 	switch text {
 	case RndCmd:
-		return p.sendRandom(chatID, username)
+		return p.sendRandom(ctx, meta.ChatID, meta.UserID)
 	case HelpCmd:
-		return p.sendHelp(chatID)
+		return p.sendHelp(ctx, meta.ChatID)
 	case StartCmd:
-		return p.sendHello(chatID)
-	default:
-		return p.tg.SendMessage(chatID, msgUnknownCommand)
+		return p.sendHello(ctx, meta.ChatID)
 	}
+
+	if strings.HasPrefix(text, "/") {
+		return p.tg.SendMessage(ctx, meta.ChatID, msgUnknownCommand)
+	}
+
+	return p.savePage(ctx, meta.ChatID, meta.UserID, text)
 }
 
-func (p *Processor) savePage(chatID int, pageURL string, username string) (err error) {
+func (p *Processor) savePage(ctx context.Context, chatID int, userID int64, pageURL string) (err error) {
 	defer func() { err = e.WrapIfErr("can't do command: save page", err) }()
 
-	page := &storage.Page{
-		URL:      pageURL,
-		UserName: username,
-	}
-
-	isExists, err := p.storage.IsExists(context.Background(), page)
+	result, err := p.service.SaveLink(ctx, userID, pageURL)
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidURL) {
+			return p.tg.SendMessage(ctx, chatID, msgInvalidURL)
+		}
+
 		return err
 	}
 
-	if isExists {
-		return p.tg.SendMessage(chatID, msgAlreadyExists)
+	if result.Duplicate {
+		return p.tg.SendMessage(ctx, chatID, msgAlreadyExists)
 	}
 
-	if err := p.storage.Save(context.Background(),page); err != nil {
+	if err := p.tg.SendMessage(ctx, chatID, msgSaved); err != nil {
 		return err
 	}
 
-	if err := p.tg.SendMessage(chatID, msgSaved); err != nil {
+	if result.RandomLink == "" {
+		return nil
+	}
+
+	return p.tg.SendMessage(ctx, chatID, result.RandomLink)
+}
+
+func (p *Processor) sendRandom(ctx context.Context, chatID int, userID int64) (err error) {
+	defer func() { err = e.WrapIfErr("can't do command: send random", err) }()
+
+	link, err := p.service.RandomLink(ctx, userID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNoSavedPages) {
+			return p.tg.SendMessage(ctx, chatID, msgNoSavedPages)
+		}
+
 		return err
 	}
 
-	return nil
+	return p.tg.SendMessage(ctx, chatID, link)
 }
 
-func (p *Processor) sendRandom(chatID int, username string) (err error) {
-	defer func() { err = e.WrapIfErr("can't do command: can't send random", err) }()
-
-	page, err := p.storage.PickRandom(context.Background(), username)
-	if err != nil && !errors.Is(err, storage.ErrNoSavedPages) {
-		return err
-	}
-
-	if errors.Is(err, storage.ErrNoSavedPages) {
-		return p.tg.SendMessage(chatID, msgNoSavedPages)
-	}
-
-	if err := p.tg.SendMessage(chatID, page.URL); err != nil {
-		return err
-	}
-
-	return p.storage.Remove(context.Background(), page)
+func (p *Processor) sendHelp(ctx context.Context, chatID int) error {
+	return p.tg.SendMessage(ctx, chatID, msgHelp)
 }
 
-func (p *Processor) sendHelp(chatID int) error {
-	return p.tg.SendMessage(chatID, msgHelp)
-}
-
-func (p *Processor) sendHello(chatID int) error {
-	return p.tg.SendMessage(chatID, msgHello)
-}
-
-func isAddCmd(text string) bool {
-	return isURL(text)
-}
-
-func isURL(text string) bool {
-	// нужно указывать ссылку с протоколом https://ya.ru
-	// можно поменять на обычную ya.ru
-	u, err := url.Parse(text)
-
-	return err == nil && u.Host != ""
+func (p *Processor) sendHello(ctx context.Context, chatID int) error {
+	return p.tg.SendMessage(ctx, chatID, msgHello)
 }

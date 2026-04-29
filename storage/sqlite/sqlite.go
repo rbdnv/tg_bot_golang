@@ -3,94 +3,147 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/mattn/go-sqlite3"
+
 	"project/storage"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 type Storage struct {
 	db *sql.DB
 }
 
-// New creates new SQLite storage.
 func New(path string) (*Storage, error) {
-	db, err := sql.Open("sqlite3", path)
-	if err != nil {
-		return nil, fmt.Errorf("can't open database: %w", err)
+	if path == "" {
+		return nil, errors.New("database path is required")
 	}
 
+	if path != ":memory:" {
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create database directory: %w", err)
+		}
+	}
+
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+
+	db.SetMaxOpenConns(1)
+
 	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("can't connect to database: %w", err)
+		_ = db.Close()
+		return nil, fmt.Errorf("connect to database: %w", err)
 	}
 
 	return &Storage{db: db}, nil
 }
 
-// Save saves page to storage.
-func (s *Storage) Save(ctx context.Context, p *storage.Page) error {
-	q := `INSERT INTO pages (url, user_name) VALUES(?, ?)`
+func (s *Storage) Init(ctx context.Context) error {
+	statements := []string{
+		`PRAGMA foreign_keys = ON`,
+		`CREATE TABLE IF NOT EXISTS links (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			link TEXT NOT NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(user_id, link)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_links_user_created_at ON links(user_id, created_at)`,
+		`CREATE TABLE IF NOT EXISTS message_counters (
+			user_id INTEGER PRIMARY KEY,
+			count INTEGER NOT NULL DEFAULT 0,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+	}
 
-	if _, err := s.db.ExecContext(ctx, q, p.URL, p.UserName); err != nil {
-		return fmt.Errorf("can't save page: %w", err)
+	for _, statement := range statements {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("init sqlite schema: %w", err)
+		}
 	}
 
 	return nil
 }
 
-// PickRandom picks random page from storage.
-func (s *Storage) PickRandom(ctx context.Context, userName string) (*storage.Page, error) {
-	q := `SELECT url FROM pages WHERE user_name = ? ORDER BY RANDOM() LIMIT 1`
+func (s *Storage) SaveLink(ctx context.Context, userID int64, link string) error {
+	q := `INSERT INTO links (user_id, link) VALUES (?, ?)`
 
-	var url string
+	if _, err := s.db.ExecContext(ctx, q, userID, link); err != nil {
+		if isUniqueConstraint(err) {
+			return storage.ErrDuplicateLink
+		}
 
-	err := s.db.QueryRowContext(ctx, q, userName).Scan(&url)
+		return fmt.Errorf("save link: %w", err)
+	}
 
-	if err == sql.ErrNoRows {
-		return nil, storage.ErrNoSavedPages
+	return nil
+}
+
+func (s *Storage) GetRandomLink(ctx context.Context, userID int64) (string, error) {
+	q := `SELECT link FROM links WHERE user_id = ? ORDER BY RANDOM() LIMIT 1`
+
+	var link string
+	err := s.db.QueryRowContext(ctx, q, userID).Scan(&link)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", storage.ErrNoSavedPages
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("can't pick random page: %w", err)
+		return "", fmt.Errorf("get random link: %w", err)
 	}
 
-	return &storage.Page{
-		URL:      url,
-		UserName: userName,
-	}, nil
-
+	return link, nil
 }
 
-// Remove removes page from storage.
-func (s *Storage) Remove(ctx context.Context, page *storage.Page) error {
-	q := `DELETE FROM pages WHERE url = ? AND user_name = ?`
-	if _, err := s.db.ExecContext(ctx, q, page.URL, page.UserName); err != nil {
-		return fmt.Errorf("can't remove page: %w", err)
-	}
-
-	return nil
-}
-
-// IsExists checks if page exists in storage.
-func (s *Storage) IsExists(ctx context.Context, page *storage.Page) (bool, error) {
-	q := `SELECT COUNT(*) FROM pages WHERE url = ? AND user_name = ?`
+func (s *Storage) IncrementUserMessages(ctx context.Context, userID int64) (int, error) {
+	q := `
+		INSERT INTO message_counters (user_id, count, updated_at)
+		VALUES (?, 1, CURRENT_TIMESTAMP)
+		ON CONFLICT(user_id) DO UPDATE SET
+			count = count + 1,
+			updated_at = CURRENT_TIMESTAMP
+		RETURNING count
+	`
 
 	var count int
-
-	if err := s.db.QueryRowContext(ctx, q, page.URL, page.UserName).Scan(&count); err != nil {
-		return false, fmt.Errorf("can't check if page exists: %w", err)
+	if err := s.db.QueryRowContext(ctx, q, userID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("increment user messages: %w", err)
 	}
 
-	return count > 0, nil
+	return count, nil
 }
 
-// Init initialization database for pages.
-func (s *Storage) Init(ctx context.Context) error {
-	q := `CREATE TABLE IF NOT EXISTS pages (url TEXT, user_name TEXT)`
+func (s *Storage) CountUserMessages(ctx context.Context, userID int64) (int, error) {
+	q := `SELECT count FROM message_counters WHERE user_id = ?`
 
-	_, err := s.db.ExecContext(ctx, q)
-	if err != nil {
-		return fmt.Errorf("can't create table: %w", err)
+	var count int
+	err := s.db.QueryRowContext(ctx, q, userID).Scan(&count)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
 	}
 
-	return nil
+	if err != nil {
+		return 0, fmt.Errorf("count user messages: %w", err)
+	}
+
+	return count, nil
+}
+
+func (s *Storage) Close() error {
+	return s.db.Close()
+}
+
+func isUniqueConstraint(err error) bool {
+	var sqliteErr sqlite3.Error
+	if errors.As(err, &sqliteErr) {
+		return sqliteErr.Code == sqlite3.ErrConstraint
+	}
+
+	return false
 }
