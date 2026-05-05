@@ -1,5 +1,7 @@
 # tg_bot_golang
 
+[![GitHub](https://img.shields.io/badge/GitHub-minkinad--collective-181717?logo=github&style=flat)](https://github.com/minkinad-collective)
+
 Telegram bot that saves links from users and periodically sends one random saved link back after every `SEND_EVERY_N` saved links.
 
 ## How It Works
