@@ -24,7 +24,11 @@ func TestNewBaseURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := newBaseURL(tt.apiBase, tt.token)
+			got, err := newBaseURL(tt.apiBase, tt.token)
+			if err != nil {
+				t.Fatalf("newBaseURL() error = %v", err)
+			}
+
 			if got.String() != tt.want {
 				t.Fatalf("newBaseURL() = %q, want %q", got.String(), tt.want)
 			}
@@ -33,9 +37,28 @@ func TestNewBaseURL(t *testing.T) {
 }
 
 func TestNewSetsDefaultTimeout(t *testing.T) {
-	client := New("api.telegram.org", "token")
+	client, err := New("api.telegram.org", "token")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
 	if client.client.Timeout != defaultTimeout {
 		t.Fatalf("timeout = %v, want %v", client.client.Timeout, defaultTimeout)
+	}
+}
+
+func TestNewReturnsErrorForInvalidBaseURL(t *testing.T) {
+	client, err := New("http://[::1", "token")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if client != nil {
+		t.Fatalf("client = %#v, want nil", client)
+	}
+
+	if !strings.Contains(err.Error(), "invalid telegram api base url") {
+		t.Fatalf("error = %q, want invalid telegram api base url", err)
 	}
 }
 
@@ -55,7 +78,10 @@ func TestUpdatesUsesConfiguredBaseURL(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client := New(server.URL+"/telegram", "test-token")
+	client, err := New(server.URL+"/telegram", "test-token")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 
 	updates, err := client.Updates(context.Background(), 123, 50)
 	if err != nil {
@@ -117,9 +143,12 @@ func TestSendMessageReturnsTelegramAPIDescription(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client := New(server.URL, "test-token")
+	client, err := New(server.URL, "test-token")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 
-	err := client.SendMessage(context.Background(), 77, "hello")
+	err = client.SendMessage(context.Background(), 77, "hello")
 	if err == nil {
 		t.Fatal("expected error")
 	}

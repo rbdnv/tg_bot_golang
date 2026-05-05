@@ -33,14 +33,19 @@ type apiResponse struct {
 	Description string          `json:"description"`
 }
 
-func New(apiBase string, token string) *Client {
-	return &Client{
-		baseURL: newBaseURL(apiBase, token),
-		client:  http.Client{Timeout: defaultTimeout},
+func New(apiBase string, token string) (*Client, error) {
+	baseURL, err := newBaseURL(apiBase, token)
+	if err != nil {
+		return nil, err
 	}
+
+	return &Client{
+		baseURL: baseURL,
+		client:  http.Client{Timeout: defaultTimeout},
+	}, nil
 }
 
-func newBaseURL(apiBase string, token string) *url.URL {
+func newBaseURL(apiBase string, token string) (*url.URL, error) {
 	apiBase = strings.TrimSpace(apiBase)
 	if apiBase == "" {
 		apiBase = "https://api.telegram.org"
@@ -50,11 +55,11 @@ func newBaseURL(apiBase string, token string) *url.URL {
 
 	u, err := url.Parse(apiBase)
 	if err != nil {
-		panic(fmt.Sprintf("invalid telegram api base url %q: %v", apiBase, err))
+		return nil, fmt.Errorf("invalid telegram api base url %q: %w", apiBase, err)
 	}
 
 	u.Path = path.Join(strings.TrimSuffix(u.Path, "/"), "bot"+token)
-	return u
+	return u, nil
 }
 
 func (c *Client) Updates(ctx context.Context, offset int, limit int) (updates []Update, err error) {

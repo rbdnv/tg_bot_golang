@@ -59,8 +59,13 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		return fmt.Errorf("load telegram offset: %w", err)
 	}
 
+	tgClient, err := telegramclient.New(cfg.TelegramHost, cfg.BotToken)
+	if err != nil {
+		return fmt.Errorf("create telegram client: %w", err)
+	}
+
 	processor := telegramevents.New(
-		telegramclient.New(cfg.TelegramHost, cfg.BotToken),
+		tgClient,
 		linkService,
 		store,
 		offset,
