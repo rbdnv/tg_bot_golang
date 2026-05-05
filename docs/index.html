@@ -160,11 +160,11 @@ make run</code></pre>
           <h2>Architecture</h2>
           <div class="architecture-list">
             <article>
-              <h3><code>main.go</code></h3>
-              <p>Loads config, configures logging, initializes sqlite, wires dependencies, and handles graceful shutdown.</p>
+              <h3><code>app/</code></h3>
+              <p>Owns bootstrap: config loading, logger setup, dependency wiring, and graceful shutdown.</p>
             </article>
             <article>
-              <h3><code>consumer/</code></h3>
+              <h3><code>consumer/poller/</code></h3>
               <p>Polls Telegram updates in batches and passes events to the processor.</p>
             </article>
             <article>
@@ -180,8 +180,12 @@ make run</code></pre>
               <p>Persists links and message counters. The sqlite implementation is the production backend.</p>
             </article>
             <article>
-              <h3><code>clients/Telegram/</code></h3>
+              <h3><code>clients/telegram/</code></h3>
               <p>Small HTTP client for <code>getUpdates</code> and <code>sendMessage</code> with request timeout support.</p>
+            </article>
+            <article>
+              <h3><code>main.go</code></h3>
+              <p>Stays intentionally thin and delegates application startup to <code>app.Run()</code>.</p>
             </article>
           </div>
         </section>

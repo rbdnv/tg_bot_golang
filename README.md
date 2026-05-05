@@ -16,9 +16,9 @@ Telegram bot that saves links from users and periodically sends one random saved
 
 The project keeps the existing package layout:
 
-- `main.go` - entrypoint, config loading, logger, graceful shutdown wiring.
-- `clients/Telegram` - Telegram HTTP client.
-- `consumer/` - event polling orchestration.
+- `app/` - application bootstrap, dependency wiring, logger, graceful shutdown.
+- `clients/telegram` - Telegram HTTP client.
+- `consumer/poller` - event polling orchestration.
 - `events/telegram` - Telegram event parsing and command routing.
 - `service/` - business logic for links, counters, URL validation, random-send decision.
 - `storage/` - storage interface plus sqlite and files implementations.
@@ -97,6 +97,12 @@ Production storage is sqlite. It creates:
 
 The files storage remains available as a lightweight implementation of the storage interface, but sqlite is the recommended production backend.
 
+## Structure
+
+- `main.go` stays thin and delegates bootstrap into `app.Run()`.
+- Import paths are lowercase and package names avoid underscores and hyphens.
+- Runtime dependencies are wired once in `app/`, while transport and business logic remain isolated.
+
 ## CI
 
 GitHub Actions workflow is in `.github/workflows/ci.yml` and runs:
@@ -120,7 +126,3 @@ GitHub Actions workflow is in `.github/workflows/ci.yml` and runs:
 - `duplicate link`: the bot ignores repeated links for the same user.
 - No random link is sent: verify `SEND_EVERY_N` and that the user has saved links.
 - sqlite build errors: `github.com/mattn/go-sqlite3` uses CGO, so install a C compiler in the runtime/build image.
-
-## Release
-
-The first production-ready release is planned as `v1.0.0`. See [CHANGELOG.md](CHANGELOG.md).

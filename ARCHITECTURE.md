@@ -4,28 +4,32 @@ This project keeps the original directory structure and adds a small `service/` 
 
 ## Runtime Flow
 
-1. `main.go` loads env config, initializes `slog`, opens sqlite, creates the service, and starts the consumer.
-2. `consumer/event-consumer` polls events in batches and passes each event to the processor.
+1. `main.go` delegates startup to `app/`, which loads env config, initializes `slog`, opens sqlite, creates the service, and starts the poller.
+2. `consumer/poller` polls events in batches and passes each event to the processor.
 3. `events/telegram` converts Telegram updates into internal events and routes messages:
    - commands are handled as Telegram commands;
    - non-command text is passed to the link service.
 4. `service` validates links, saves them, increments user counters, and decides when to request a random link.
 5. `storage` persists links and counters.
-6. `clients/Telegram` sends HTTP requests to Telegram.
+6. `clients/telegram` sends HTTP requests to Telegram.
 
 ## Package Responsibilities
 
-### `main.go`
+### `app/`
 
 - Load `BOT_TOKEN`, database path, `SEND_EVERY_N`, log level, and environment.
 - Create cancellable context from OS signals.
 - Initialize storage schema.
-- Wire Telegram client, processor, service, and consumer.
+- Wire Telegram client, processor, service, and poller.
 - Close storage during shutdown.
 
-### `consumer/`
+### `main.go`
 
-The consumer is orchestration only. It does not know Telegram commands or link rules. It fetches events, logs failures, respects context cancellation, and delegates processing.
+`main.go` is intentionally thin. It delegates startup to `app.Run()` and only converts a fatal error into process exit.
+
+### `consumer/poller`
+
+The poller is orchestration only. It does not know Telegram commands or link rules. It fetches events, logs failures, respects context cancellation, and delegates processing.
 
 ### `events/telegram`
 
@@ -56,7 +60,7 @@ The storage interface exposes data access only:
 
 The sqlite implementation creates tables and indexes on startup. The files implementation remains for compatibility and local experimentation.
 
-### `clients/Telegram`
+### `clients/telegram`
 
 The Telegram client is a thin HTTP wrapper around `getUpdates` and `sendMessage`. It accepts context so shutdown can cancel in-flight requests.
 
@@ -70,4 +74,4 @@ Errors are wrapped with `%w` so callers can use `errors.Is`. Domain errors inclu
 
 ## Shutdown
 
-`main.go` uses `signal.NotifyContext`. When `SIGINT` or `SIGTERM` arrives, polling stops, in-flight HTTP requests receive context cancellation, and sqlite is closed.
+`app/` uses `signal.NotifyContext`. When `SIGINT` or `SIGTERM` arrives, polling stops, in-flight HTTP requests receive context cancellation, and sqlite is closed.
