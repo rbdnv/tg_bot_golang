@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Documentation for tg_bot_golang, a Telegram bot that saves user links and returns a random saved link on schedule.">
+  <title>tg_bot_golang Docs</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Telegram Bot Documentation</p>
+        <h1>tg_bot_golang</h1>
+        <p class="lede">
+          A Go Telegram bot that stores user links, ignores duplicates, and sends a random saved link
+          back after every configured number of successful saves.
+        </p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#quick-start">Quick Start</a>
+          <a class="button button-secondary" href="#architecture">Architecture</a>
+        </div>
+      </div>
+      <aside class="hero-card">
+        <p class="card-label">Core flow</p>
+        <ol>
+          <li>User sends a full <code>http://</code> or <code>https://</code> URL</li>
+          <li>Bot validates and normalizes the link</li>
+          <li>Unique links are stored per Telegram user</li>
+          <li>Every <code>SEND_EVERY_N</code> saves, the bot returns one random saved link</li>
+        </ol>
+      </aside>
+    </header>
+
+    <main class="content-grid">
+      <nav class="toc" aria-label="Table of contents">
+        <p class="toc-title">Contents</p>
+        <a href="#overview">Overview</a>
+        <a href="#quick-start">Quick Start</a>
+        <a href="#configuration">Configuration</a>
+        <a href="#commands">Commands and Behavior</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#storage">Storage</a>
+        <a href="#quality">Quality Checks</a>
+        <a href="#operations">Operations</a>
+        <a href="#deployment">Docs Deployment</a>
+      </nav>
+
+      <div class="content">
+        <section id="overview" class="panel">
+          <h2>Overview</h2>
+          <p>
+            The bot runs as a long-polling Telegram consumer. It accepts plain-text links from users,
+            stores them in sqlite, and exposes a manual random-link command through <code>/rnd</code>.
+            The business rules live in the service layer so Telegram integration remains thin.
+          </p>
+          <div class="pill-row">
+            <span class="pill">Go</span>
+            <span class="pill">Telegram Bot API</span>
+            <span class="pill">sqlite</span>
+            <span class="pill">GitHub Actions</span>
+          </div>
+        </section>
+
+        <section id="quick-start" class="panel">
+          <h2>Quick Start</h2>
+          <p>Use this flow to run the bot locally.</p>
+          <ol class="steps">
+            <li>Install Go using the version declared in <code>go.mod</code>.</li>
+            <li>Install a C compiler because <code>github.com/mattn/go-sqlite3</code> uses CGO.</li>
+            <li>Copy the example environment file and set the bot token.</li>
+            <li>Start the application with Go or Make.</li>
+          </ol>
+          <pre><code>cp .env.example .env
+go run .
+
+# or
+make run</code></pre>
+        </section>
+
+        <section id="configuration" class="panel">
+          <h2>Configuration</h2>
+          <p>The bot reads configuration from environment variables.</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Variable</th>
+                  <th>Required</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>BOT_TOKEN</code></td>
+                  <td>Yes</td>
+                  <td>Telegram bot token issued by BotFather.</td>
+                </tr>
+                <tr>
+                  <td><code>DATABASE_PATH</code></td>
+                  <td>Yes*</td>
+                  <td>Path to the sqlite database file, for example <code>data/sqlite/storage.db</code>.</td>
+                </tr>
+                <tr>
+                  <td><code>DATABASE_URL</code></td>
+                  <td>Fallback</td>
+                  <td>Accepted as an alternative source for the sqlite path.</td>
+                </tr>
+                <tr>
+                  <td><code>SEND_EVERY_N</code></td>
+                  <td>Yes</td>
+                  <td>Send a random saved link after every N successful saves.</td>
+                </tr>
+                <tr>
+                  <td><code>LOG_LEVEL</code></td>
+                  <td>Yes</td>
+                  <td>One of <code>debug</code>, <code>info</code>, <code>warn</code>, or <code>error</code>.</td>
+                </tr>
+                <tr>
+                  <td><code>ENV</code></td>
+                  <td>Yes</td>
+                  <td>Application environment such as <code>local</code>, <code>dev</code>, <code>staging</code>, or <code>production</code>.</td>
+                </tr>
+                <tr>
+                  <td><code>TELEGRAM_HOST</code></td>
+                  <td>No</td>
+                  <td>Optional Telegram API host or full base URL. Defaults to <code>api.telegram.org</code>.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">* Either <code>DATABASE_PATH</code> or <code>DATABASE_URL</code> must be set.</p>
+        </section>
+
+        <section id="commands" class="panel">
+          <h2>Commands and Behavior</h2>
+          <div class="two-up">
+            <div>
+              <h3>User commands</h3>
+              <ul>
+                <li><code>/start</code> sends the intro and help message.</li>
+                <li><code>/help</code> shows supported bot behavior.</li>
+                <li><code>/rnd</code> returns one random saved link for the current user.</li>
+              </ul>
+            </div>
+            <div>
+              <h3>Link handling rules</h3>
+              <ul>
+                <li>Only full <code>http://</code> and <code>https://</code> links are accepted.</li>
+                <li>Fragments are removed during normalization.</li>
+                <li>Hosts are lowercased and default ports are dropped.</li>
+                <li>Duplicate links for the same user are rejected without incrementing the counter.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="architecture" class="panel">
+          <h2>Architecture</h2>
+          <div class="architecture-list">
+            <article>
+              <h3><code>main.go</code></h3>
+              <p>Loads config, configures logging, initializes sqlite, wires dependencies, and handles graceful shutdown.</p>
+            </article>
+            <article>
+              <h3><code>consumer/</code></h3>
+              <p>Polls Telegram updates in batches and passes events to the processor.</p>
+            </article>
+            <article>
+              <h3><code>events/telegram/</code></h3>
+              <p>Maps Telegram updates into internal events, routes commands, and turns service results into user-facing messages.</p>
+            </article>
+            <article>
+              <h3><code>service/</code></h3>
+              <p>Owns business rules: validation, normalization, duplicate handling, counters, and scheduled random-link sends.</p>
+            </article>
+            <article>
+              <h3><code>storage/</code></h3>
+              <p>Persists links and message counters. The sqlite implementation is the production backend.</p>
+            </article>
+            <article>
+              <h3><code>clients/Telegram/</code></h3>
+              <p>Small HTTP client for <code>getUpdates</code> and <code>sendMessage</code> with request timeout support.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="storage" class="panel">
+          <h2>Storage</h2>
+          <p>Production data is stored in sqlite with two main tables:</p>
+          <ul>
+            <li><code>links</code>: keeps <code>user_id</code>, normalized <code>link</code>, and <code>created_at</code>, with a unique <code>(user_id, link)</code> constraint.</li>
+            <li><code>message_counters</code>: tracks how many links each user has saved and when that counter changed.</li>
+          </ul>
+          <p>
+            The database directory is created automatically on startup. The bot initializes schema and indexes
+            before it starts processing updates.
+          </p>
+        </section>
+
+        <section id="quality" class="panel">
+          <h2>Quality Checks</h2>
+          <p>Run the standard checks before shipping changes.</p>
+          <pre><code>go test ./...
+go test -race ./...
+go vet ./...
+test -z "$(gofmt -l .)"</code></pre>
+          <p>You can also use:</p>
+          <pre><code>make test
+make lint</code></pre>
+        </section>
+
+        <section id="operations" class="panel">
+          <h2>Operations</h2>
+          <div class="two-up">
+            <div>
+              <h3>Troubleshooting</h3>
+              <ul>
+                <li><code>BOT_TOKEN is required</code>: export the token or load it from <code>.env</code>.</li>
+                <li><code>DATABASE_PATH or DATABASE_URL is required</code>: configure a sqlite location.</li>
+                <li>No random link is sent: verify <code>SEND_EVERY_N</code> and confirm the user has saved links.</li>
+                <li>sqlite build errors: install a C compiler in the build or runtime environment.</li>
+              </ul>
+            </div>
+            <div>
+              <h3>Shutdown behavior</h3>
+              <ul>
+                <li>The process listens for <code>SIGINT</code> and <code>SIGTERM</code>.</li>
+                <li>Polling stops through context cancellation.</li>
+                <li>In-flight Telegram HTTP requests are canceled via context.</li>
+                <li>sqlite is closed before exit.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="deployment" class="panel">
+          <h2>Docs Deployment</h2>
+          <p>
+            This repository publishes the content of <code>docs/</code> to GitHub Pages through
+            <code>.github/workflows/pages.yml</code>. The deployment runs on pushes to <code>main</code>
+            and on manual workflow dispatch.
+          </p>
+          <ol class="steps">
+            <li>Push the repository with the Pages workflow enabled.</li>
+            <li>In GitHub repository settings, open <strong>Pages</strong>.</li>
+            <li>Select <strong>GitHub Actions</strong> as the build and deployment source if it is not already enabled.</li>
+            <li>After the workflow succeeds, GitHub Pages serves the static site from the published artifact.</li>
+          </ol>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

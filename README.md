@@ -44,6 +44,7 @@ Required variables:
 - `ENV` - `local`, `dev`, `staging`, or `production`.
 
 `DATABASE_URL` is accepted as a fallback for `DATABASE_PATH`.
+`TELEGRAM_HOST` is optional and defaults to `api.telegram.org`. It may also be set to a full base URL for testing through a local proxy or mock server.
 
 ## Local Run
 
@@ -105,6 +106,12 @@ GitHub Actions workflow is in `.github/workflows/ci.yml` and runs:
 - `go vet ./...`
 - `go test ./...`
 - `go test -race ./...`
+
+## Documentation
+
+- Static docs site source is in `docs/`.
+- GitHub Pages deployment workflow is in `.github/workflows/pages.yml`.
+- After enabling Pages with the `GitHub Actions` source in repository settings, pushes to `main` publish the docs site automatically.
 
 ## Troubleshooting
 
