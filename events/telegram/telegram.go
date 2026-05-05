@@ -12,10 +12,11 @@ import (
 )
 
 type Processor struct {
-	tg      telegramClient
-	offset  int
-	service *service.LinkService
-	log     *slog.Logger
+	tg          telegramClient
+	offsetStore offsetStore
+	offset      int
+	service     *service.LinkService
+	log         *slog.Logger
 }
 
 type telegramClient interface {
@@ -23,7 +24,12 @@ type telegramClient interface {
 	SendMessage(ctx context.Context, chatID int, text string) error
 }
 
+type offsetStore interface {
+	SaveTelegramOffset(ctx context.Context, offset int) error
+}
+
 type Meta struct {
+	UpdateID int
 	ChatID   int
 	UserID   int64
 	Username string
@@ -34,15 +40,17 @@ var (
 	ErrUnknownMetaType  = errors.New("unknown meta type")
 )
 
-func New(client telegramClient, service *service.LinkService, log *slog.Logger) *Processor {
+func New(client telegramClient, service *service.LinkService, offsetStore offsetStore, initialOffset int, log *slog.Logger) *Processor {
 	if log == nil {
 		log = slog.Default()
 	}
 
 	return &Processor{
-		tg:      client,
-		service: service,
-		log:     log,
+		tg:          client,
+		offsetStore: offsetStore,
+		offset:      initialOffset,
+		service:     service,
+		log:         log,
 	}
 }
 
@@ -68,7 +76,6 @@ func (p *Processor) Fetch(ctx context.Context, limit int) ([]events.Event, error
 		skipped++
 	}
 
-	p.offset = updates[len(updates)-1].ID + 1
 	if skipped > 0 {
 		p.log.DebugContext(ctx, "skipped unsupported telegram updates", "count", skipped)
 	}
@@ -98,6 +105,24 @@ func (p *Processor) processMessage(ctx context.Context, event events.Event) erro
 		return e.Wrap("can't process message", err)
 	}
 
+	if err := p.confirmUpdate(ctx, meta.UpdateID+1); err != nil {
+		return e.Wrap("can't process message", err)
+	}
+
+	return nil
+}
+
+func (p *Processor) confirmUpdate(ctx context.Context, offset int) error {
+	if p.offsetStore == nil {
+		p.offset = offset
+		return nil
+	}
+
+	if err := p.offsetStore.SaveTelegramOffset(ctx, offset); err != nil {
+		return e.Wrap("can't save telegram offset", err)
+	}
+
+	p.offset = offset
 	return nil
 }
 
@@ -119,6 +144,7 @@ func event(upd tgclient.Update) (events.Event, bool) {
 		Type: events.Message,
 		Text: upd.Message.Text,
 		Meta: Meta{
+			UpdateID: upd.ID,
 			ChatID:   upd.Message.Chat.ID,
 			UserID:   upd.Message.From.ID,
 			Username: upd.Message.From.Username,

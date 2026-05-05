@@ -16,7 +16,7 @@ func TestFetchSkipsUnsupportedUpdatesAndAdvancesOffset(t *testing.T) {
 				{
 					ID: 2,
 					Message: &tgclient.IncomingMessage{
-						Text: "https://example.com",
+						Text: HelpCmd,
 						From: tgclient.From{ID: 42, Username: "alice"},
 						Chat: tgclient.Chat{ID: 100},
 					},
@@ -26,7 +26,7 @@ func TestFetchSkipsUnsupportedUpdatesAndAdvancesOffset(t *testing.T) {
 		},
 	}
 
-	p := New(client, nil, nil)
+	p := New(client, nil, nil, 0, nil)
 
 	got, err := p.Fetch(context.Background(), 10)
 	if err != nil {
@@ -46,12 +46,16 @@ func TestFetchSkipsUnsupportedUpdatesAndAdvancesOffset(t *testing.T) {
 		t.Fatalf("event meta type = %T, want %T", got[0].Meta, Meta{})
 	}
 
-	if meta.UserID != 42 || meta.ChatID != 100 || meta.Username != "alice" {
-		t.Fatalf("meta = %+v, want user_id=42 chat_id=100 username=alice", meta)
+	if meta.UpdateID != 2 || meta.UserID != 42 || meta.ChatID != 100 || meta.Username != "alice" {
+		t.Fatalf("meta = %+v, want update_id=2 user_id=42 chat_id=100 username=alice", meta)
 	}
 
 	if client.offsets[0] != 0 {
 		t.Fatalf("first fetch offset = %d, want 0", client.offsets[0])
+	}
+
+	if err := p.Process(context.Background(), got[0]); err != nil {
+		t.Fatalf("Process() error = %v", err)
 	}
 
 	if _, err := p.Fetch(context.Background(), 10); err != nil {
@@ -66,6 +70,7 @@ func TestFetchSkipsUnsupportedUpdatesAndAdvancesOffset(t *testing.T) {
 type stubTelegramClient struct {
 	responses [][]tgclient.Update
 	offsets   []int
+	sendErr   error
 }
 
 func (s *stubTelegramClient) Updates(ctx context.Context, offset int, limit int) ([]tgclient.Update, error) {
@@ -80,5 +85,5 @@ func (s *stubTelegramClient) Updates(ctx context.Context, offset int, limit int)
 }
 
 func (s *stubTelegramClient) SendMessage(ctx context.Context, chatID int, text string) error {
-	return nil
+	return s.sendErr
 }

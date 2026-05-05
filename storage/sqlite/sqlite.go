@@ -17,6 +17,8 @@ type Storage struct {
 	db *sql.DB
 }
 
+const telegramOffsetKey = "telegram_offset"
+
 func New(path string) (*Storage, error) {
 	if path == "" {
 		return nil, errors.New("database path is required")
@@ -59,6 +61,10 @@ func (s *Storage) Init(ctx context.Context) error {
 			user_id INTEGER PRIMARY KEY,
 			count INTEGER NOT NULL DEFAULT 0,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS bot_state (
+			key TEXT PRIMARY KEY,
+			value INTEGER NOT NULL
 		)`,
 	}
 
@@ -117,6 +123,36 @@ func (s *Storage) IncrementUserMessages(ctx context.Context, userID int64) (int,
 	}
 
 	return count, nil
+}
+
+func (s *Storage) LoadTelegramOffset(ctx context.Context) (int, error) {
+	q := `SELECT value FROM bot_state WHERE key = ?`
+
+	var offset int
+	err := s.db.QueryRowContext(ctx, q, telegramOffsetKey).Scan(&offset)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+
+	if err != nil {
+		return 0, fmt.Errorf("load telegram offset: %w", err)
+	}
+
+	return offset, nil
+}
+
+func (s *Storage) SaveTelegramOffset(ctx context.Context, offset int) error {
+	q := `
+		INSERT INTO bot_state (key, value)
+		VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`
+
+	if _, err := s.db.ExecContext(ctx, q, telegramOffsetKey, offset); err != nil {
+		return fmt.Errorf("save telegram offset: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Storage) CountUserMessages(ctx context.Context, userID int64) (int, error) {

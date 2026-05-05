@@ -81,6 +81,33 @@ func TestStorageEmptyUser(t *testing.T) {
 	}
 }
 
+func TestStorageTelegramOffset(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorage(t)
+
+	offset, err := s.LoadTelegramOffset(ctx)
+	if err != nil {
+		t.Fatalf("load offset: %v", err)
+	}
+
+	if offset != 0 {
+		t.Fatalf("initial offset = %d, want 0", offset)
+	}
+
+	if err := s.SaveTelegramOffset(ctx, 123); err != nil {
+		t.Fatalf("save offset: %v", err)
+	}
+
+	offset, err = s.LoadTelegramOffset(ctx)
+	if err != nil {
+		t.Fatalf("load saved offset: %v", err)
+	}
+
+	if offset != 123 {
+		t.Fatalf("saved offset = %d, want 123", offset)
+	}
+}
+
 func newTestStorage(t *testing.T) *Storage {
 	t.Helper()
 

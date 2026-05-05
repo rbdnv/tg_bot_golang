@@ -52,19 +52,23 @@ func (p *Poller) Start(ctx context.Context) error {
 			continue
 		}
 
-		p.handleEvents(ctx, gotEvents)
+		if err := p.handleEvents(ctx, gotEvents); err != nil {
+			waitForNextTick(ctx, ticker)
+		}
 	}
 }
 
-func (p *Poller) handleEvents(ctx context.Context, events []events.Event) {
+func (p *Poller) handleEvents(ctx context.Context, events []events.Event) error {
 	for _, event := range events {
 		p.log.DebugContext(ctx, "handling event", "type", event.Type)
 
 		if err := p.processor.Process(ctx, event); err != nil {
 			p.log.ErrorContext(ctx, "handle event failed", "error", err)
-			continue
+			return err
 		}
 	}
+
+	return nil
 }
 
 func waitForNextTick(ctx context.Context, ticker *time.Ticker) {
