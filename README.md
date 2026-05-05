@@ -31,22 +31,30 @@ More detail is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Configuration
 
-Create `.env` from `.env.example` or export variables directly:
+Use `.env.example` as a template, then export variables in your shell or process manager:
 
 ```bash
 cp .env.example .env
+set -a
+source .env
+set +a
 ```
+
+The application reads `os.Getenv` only. It does not auto-load `.env`.
 
 Required variables:
 
 - `BOT_TOKEN` - Telegram bot token from BotFather.
 - `DATABASE_PATH` - sqlite database file path, for example `data/sqlite/storage.db`.
 - `SEND_EVERY_N` - send a random saved link after every N saved links.
-- `LOG_LEVEL` - `debug`, `info`, `warn`, or `error`.
-- `ENV` - `local`, `dev`, `staging`, or `production`.
+
+Optional variables:
+
+- `LOG_LEVEL` - `debug`, `info`, `warn`, or `error`. Defaults to `info`.
+- `ENV` - `local`, `dev`, `staging`, or `production`. Defaults to `local`.
 
 `DATABASE_URL` is accepted as a fallback for `DATABASE_PATH`.
-`TELEGRAM_HOST` is optional and defaults to `api.telegram.org`. It may also be set to a full base URL for testing through a local proxy or mock server.
+`TELEGRAM_HOST` is optional and defaults to `api.telegram.org`. It may also be set to a full base URL for testing through a local proxy or mock server. Invalid values fail startup with a regular configuration error.
 
 ## Local Run
 
@@ -96,6 +104,7 @@ Production storage is sqlite. It creates:
 
 - `links` with `user_id`, `link`, `created_at`, and a unique `(user_id, link)` constraint.
 - `message_counters` with `user_id`, `count`, and `updated_at`.
+- `bot_state` for internal runtime state such as the persisted Telegram update offset.
 
 The files storage remains available as a lightweight implementation of the storage interface, but sqlite is the recommended production backend.
 
@@ -104,6 +113,7 @@ The files storage remains available as a lightweight implementation of the stora
 - `main.go` stays thin and delegates bootstrap into `app.Run()`.
 - Import paths are lowercase and package names avoid underscores and hyphens.
 - Runtime dependencies are wired once in `app/`, while transport and business logic remain isolated.
+- Telegram update acknowledgements are persisted in sqlite after successful processing, which avoids replaying the full unconfirmed batch after restart.
 
 ## CI
 
@@ -123,8 +133,9 @@ GitHub Actions workflow is in `.github/workflows/ci.yml` and runs:
 
 ## Troubleshooting
 
-- `BOT_TOKEN is required`: export `BOT_TOKEN` or load `.env` before running.
+- `BOT_TOKEN is required`: export `BOT_TOKEN` in the environment before running.
 - `DATABASE_PATH or DATABASE_URL is required`: set a sqlite path.
+- `invalid telegram api base url`: fix `TELEGRAM_HOST` so it is a valid host or full base URL.
 - `duplicate link`: the bot ignores repeated links for the same user.
 - No random link is sent: verify `SEND_EVERY_N` and that the user has saved links.
 - sqlite build errors: `github.com/mattn/go-sqlite3` uses CGO, so install a C compiler in the runtime/build image.

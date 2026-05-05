@@ -4,8 +4,10 @@
 
 1. Install Go matching `go.mod`.
 2. Install a C compiler because sqlite uses `github.com/mattn/go-sqlite3`.
-3. Copy `.env.example` to `.env` and fill in `BOT_TOKEN`.
+3. Copy `.env.example` to `.env`, fill in the values, and export them in your shell before running the app.
 4. Run tests before opening a pull request.
+
+The application does not auto-load `.env`; it reads environment variables from the process environment.
 
 ## Commands
 

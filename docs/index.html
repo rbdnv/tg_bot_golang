@@ -28,6 +28,7 @@
           <li>User sends a full <code>http://</code> or <code>https://</code> URL</li>
           <li>Bot validates and normalizes the link</li>
           <li>Unique links are stored per Telegram user</li>
+          <li>After successful processing, the next Telegram offset is persisted</li>
           <li>Every <code>SEND_EVERY_N</code> saves, the bot returns one random saved link</li>
         </ol>
       </aside>
@@ -51,9 +52,10 @@
         <section id="overview" class="panel">
           <h2>Overview</h2>
           <p>
-            The bot runs as a long-polling Telegram consumer. It accepts plain-text links from users,
-            stores them in sqlite, and exposes a manual random-link command through <code>/rnd</code>.
-            The business rules live in the service layer so Telegram integration remains thin.
+            The bot runs as a polling Telegram consumer. It accepts plain-text links from users,
+            stores them in sqlite, persists its acknowledged Telegram offset, and exposes a manual
+            random-link command through <code>/rnd</code>. The business rules live in the service
+            layer so Telegram integration remains thin.
           </p>
           <div class="pill-row">
             <span class="pill">Go</span>
@@ -69,14 +71,18 @@
           <ol class="steps">
             <li>Install Go using the version declared in <code>go.mod</code>.</li>
             <li>Install a C compiler because <code>github.com/mattn/go-sqlite3</code> uses CGO.</li>
-            <li>Copy the example environment file and set the bot token.</li>
+            <li>Copy the example environment file, fill in the values, and export them in your shell.</li>
             <li>Start the application with Go or Make.</li>
           </ol>
           <pre><code>cp .env.example .env
+set -a
+source .env
+set +a
 go run .
 
 # or
 make run</code></pre>
+          <p class="note">The application reads <code>os.Getenv</code> only. It does not auto-load <code>.env</code>.</p>
         </section>
 
         <section id="configuration" class="panel">
@@ -114,18 +120,18 @@ make run</code></pre>
                 </tr>
                 <tr>
                   <td><code>LOG_LEVEL</code></td>
-                  <td>Yes</td>
-                  <td>One of <code>debug</code>, <code>info</code>, <code>warn</code>, or <code>error</code>.</td>
+                  <td>No</td>
+                  <td>One of <code>debug</code>, <code>info</code>, <code>warn</code>, or <code>error</code>. Defaults to <code>info</code>.</td>
                 </tr>
                 <tr>
                   <td><code>ENV</code></td>
-                  <td>Yes</td>
-                  <td>Application environment such as <code>local</code>, <code>dev</code>, <code>staging</code>, or <code>production</code>.</td>
+                  <td>No</td>
+                  <td>Application environment such as <code>local</code>, <code>dev</code>, <code>staging</code>, or <code>production</code>. Defaults to <code>local</code>.</td>
                 </tr>
                 <tr>
                   <td><code>TELEGRAM_HOST</code></td>
                   <td>No</td>
-                  <td>Optional Telegram API host or full base URL. Defaults to <code>api.telegram.org</code>.</td>
+                  <td>Optional Telegram API host or full base URL. Defaults to <code>api.telegram.org</code>. Invalid values fail startup with a normal error.</td>
                 </tr>
               </tbody>
             </table>
@@ -165,11 +171,11 @@ make run</code></pre>
             </article>
             <article>
               <h3><code>consumer/poller/</code></h3>
-              <p>Polls Telegram updates in batches and passes events to the processor.</p>
+              <p>Polls Telegram updates in batches, passes events to the processor, and stops the current batch on the first processing error.</p>
             </article>
             <article>
               <h3><code>events/telegram/</code></h3>
-              <p>Maps Telegram updates into internal events, routes commands, and turns service results into user-facing messages.</p>
+              <p>Maps Telegram updates into internal events, routes commands, turns service results into user-facing messages, and persists the next acknowledged Telegram offset after successful processing.</p>
             </article>
             <article>
               <h3><code>service/</code></h3>
@@ -177,11 +183,11 @@ make run</code></pre>
             </article>
             <article>
               <h3><code>storage/</code></h3>
-              <p>Persists links and message counters. The sqlite implementation is the production backend.</p>
+              <p>Persists links, message counters, and bot runtime state. The sqlite implementation is the production backend.</p>
             </article>
             <article>
               <h3><code>clients/telegram/</code></h3>
-              <p>Small HTTP client for <code>getUpdates</code> and <code>sendMessage</code> with request timeout support.</p>
+              <p>Small HTTP client for <code>getUpdates</code> and <code>sendMessage</code> with request timeout support, startup URL validation, and <code>POST</code> form bodies for outgoing messages.</p>
             </article>
             <article>
               <h3><code>main.go</code></h3>
@@ -192,10 +198,11 @@ make run</code></pre>
 
         <section id="storage" class="panel">
           <h2>Storage</h2>
-          <p>Production data is stored in sqlite with two main tables:</p>
+          <p>Production data is stored in sqlite with three main tables:</p>
           <ul>
             <li><code>links</code>: keeps <code>user_id</code>, normalized <code>link</code>, and <code>created_at</code>, with a unique <code>(user_id, link)</code> constraint.</li>
             <li><code>message_counters</code>: tracks how many links each user has saved and when that counter changed.</li>
+            <li><code>bot_state</code>: stores internal runtime state such as the persisted Telegram update offset.</li>
           </ul>
           <p>
             The database directory is created automatically on startup. The bot initializes schema and indexes
@@ -221,8 +228,9 @@ make lint</code></pre>
             <div>
               <h3>Troubleshooting</h3>
               <ul>
-                <li><code>BOT_TOKEN is required</code>: export the token or load it from <code>.env</code>.</li>
+                <li><code>BOT_TOKEN is required</code>: export the token in the process environment before startup.</li>
                 <li><code>DATABASE_PATH or DATABASE_URL is required</code>: configure a sqlite location.</li>
+                <li><code>invalid telegram api base url</code>: fix <code>TELEGRAM_HOST</code> so it is a valid host or full base URL.</li>
                 <li>No random link is sent: verify <code>SEND_EVERY_N</code> and confirm the user has saved links.</li>
                 <li>sqlite build errors: install a C compiler in the build or runtime environment.</li>
               </ul>
@@ -233,6 +241,7 @@ make lint</code></pre>
                 <li>The process listens for <code>SIGINT</code> and <code>SIGTERM</code>.</li>
                 <li>Polling stops through context cancellation.</li>
                 <li>In-flight Telegram HTTP requests are canceled via context.</li>
+                <li>The next Telegram offset is already in sqlite for successfully processed updates.</li>
                 <li>sqlite is closed before exit.</li>
               </ul>
             </div>
