@@ -5,17 +5,22 @@ import (
 	"errors"
 	"log/slog"
 
-	"project/clients/Telegram"
+	tgclient "project/clients/telegram"
 	"project/events"
 	"project/lib/e"
 	"project/service"
 )
 
 type Processor struct {
-	tg      *telegram.Client
+	tg      telegramClient
 	offset  int
 	service *service.LinkService
 	log     *slog.Logger
+}
+
+type telegramClient interface {
+	Updates(ctx context.Context, offset int, limit int) ([]tgclient.Update, error)
+	SendMessage(ctx context.Context, chatID int, text string) error
 }
 
 type Meta struct {
@@ -29,7 +34,7 @@ var (
 	ErrUnknownMetaType  = errors.New("unknown meta type")
 )
 
-func New(client *telegram.Client, service *service.LinkService, log *slog.Logger) *Processor {
+func New(client telegramClient, service *service.LinkService, log *slog.Logger) *Processor {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -52,12 +57,21 @@ func (p *Processor) Fetch(ctx context.Context, limit int) ([]events.Event, error
 	}
 
 	res := make([]events.Event, 0, len(updates))
+	skipped := 0
 
 	for _, u := range updates {
-		res = append(res, event(u))
+		if event, ok := event(u); ok {
+			res = append(res, event)
+			continue
+		}
+
+		skipped++
 	}
 
 	p.offset = updates[len(updates)-1].ID + 1
+	if skipped > 0 {
+		p.log.DebugContext(ctx, "skipped unsupported telegram updates", "count", skipped)
+	}
 
 	return res, nil
 }
@@ -96,36 +110,18 @@ func meta(event events.Event) (Meta, error) {
 	return res, nil
 }
 
-func event(upd telegram.Update) events.Event {
-	updType := fetchType(upd)
-
-	res := events.Event{
-		Type: updType,
-		Text: fetchText(upd),
+func event(upd tgclient.Update) (events.Event, bool) {
+	if upd.Message == nil {
+		return events.Event{}, false
 	}
 
-	if updType == events.Message {
-		res.Meta = Meta{
+	return events.Event{
+		Type: events.Message,
+		Text: upd.Message.Text,
+		Meta: Meta{
 			ChatID:   upd.Message.Chat.ID,
 			UserID:   upd.Message.From.ID,
 			Username: upd.Message.From.Username,
-		}
-	}
-
-	return res
-}
-
-func fetchText(upd telegram.Update) string {
-	if upd.Message == nil {
-		return ""
-	}
-	return upd.Message.Text
-}
-
-func fetchType(upd telegram.Update) events.Type {
-	if upd.Message == nil {
-		return events.Unknown
-	}
-
-	return events.Message
+		},
+	}, true
 }

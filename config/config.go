@@ -25,7 +25,7 @@ func Load() (Config, error) {
 		BotToken:     strings.TrimSpace(os.Getenv("BOT_TOKEN")),
 		DatabasePath: firstNonEmpty(os.Getenv("DATABASE_PATH"), os.Getenv("DATABASE_URL")),
 		Env:          firstNonEmpty(os.Getenv("ENV"), "local"),
-		TelegramHost: defaultTelegramHost,
+		TelegramHost: firstNonEmpty(os.Getenv("TELEGRAM_HOST"), defaultTelegramHost),
 	}
 
 	if cfg.BotToken == "" {

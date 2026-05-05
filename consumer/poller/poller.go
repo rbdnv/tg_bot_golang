@@ -1,25 +1,26 @@
-package event_consumer
+package poller
 
 import (
 	"context"
 	"log/slog"
-	"project/events"
 	"time"
+
+	"project/events"
 )
 
-type Consumer struct {
+type Poller struct {
 	fetcher   events.Fetcher
 	processor events.Processor
 	batchSize int
 	log       *slog.Logger
 }
 
-func New(fetcher events.Fetcher, processor events.Processor, batchSize int, log *slog.Logger) Consumer {
+func New(fetcher events.Fetcher, processor events.Processor, batchSize int, log *slog.Logger) *Poller {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	return Consumer{
+	return &Poller{
 		fetcher:   fetcher,
 		processor: processor,
 		batchSize: batchSize,
@@ -27,21 +28,21 @@ func New(fetcher events.Fetcher, processor events.Processor, batchSize int, log 
 	}
 }
 
-func (c Consumer) Start(ctx context.Context) error {
+func (p *Poller) Start(ctx context.Context) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			c.log.InfoContext(ctx, "consumer stopped")
+			p.log.InfoContext(ctx, "poller stopped")
 			return ctx.Err()
 		default:
 		}
 
-		gotEvents, err := c.fetcher.Fetch(ctx, c.batchSize)
+		gotEvents, err := p.fetcher.Fetch(ctx, p.batchSize)
 		if err != nil {
-			c.log.ErrorContext(ctx, "consumer fetch failed", "error", err)
+			p.log.ErrorContext(ctx, "poller fetch failed", "error", err)
 			waitForNextTick(ctx, ticker)
 			continue
 		}
@@ -51,16 +52,16 @@ func (c Consumer) Start(ctx context.Context) error {
 			continue
 		}
 
-		c.handleEvents(ctx, gotEvents)
+		p.handleEvents(ctx, gotEvents)
 	}
 }
 
-func (c *Consumer) handleEvents(ctx context.Context, events []events.Event) {
+func (p *Poller) handleEvents(ctx context.Context, events []events.Event) {
 	for _, event := range events {
-		c.log.DebugContext(ctx, "handling event", "type", event.Type)
+		p.log.DebugContext(ctx, "handling event", "type", event.Type)
 
-		if err := c.processor.Process(ctx, event); err != nil {
-			c.log.ErrorContext(ctx, "handle event failed", "error", err)
+		if err := p.processor.Process(ctx, event); err != nil {
+			p.log.ErrorContext(ctx, "handle event failed", "error", err)
 			continue
 		}
 	}

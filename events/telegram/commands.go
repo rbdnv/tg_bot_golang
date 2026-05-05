@@ -19,20 +19,38 @@ const (
 func (p *Processor) doCmd(ctx context.Context, text string, meta Meta) error {
 	text = strings.TrimSpace(text)
 
-	switch text {
-	case RndCmd:
-		return p.sendRandom(ctx, meta.ChatID, meta.UserID)
-	case HelpCmd:
-		return p.sendHelp(ctx, meta.ChatID)
-	case StartCmd:
-		return p.sendHello(ctx, meta.ChatID)
-	}
-
-	if strings.HasPrefix(text, "/") {
-		return p.tg.SendMessage(ctx, meta.ChatID, msgUnknownCommand)
+	if cmd, ok := commandName(text); ok {
+		switch cmd {
+		case RndCmd:
+			return p.sendRandom(ctx, meta.ChatID, meta.UserID)
+		case HelpCmd:
+			return p.sendHelp(ctx, meta.ChatID)
+		case StartCmd:
+			return p.sendHello(ctx, meta.ChatID)
+		default:
+			return p.tg.SendMessage(ctx, meta.ChatID, msgUnknownCommand)
+		}
 	}
 
 	return p.savePage(ctx, meta.ChatID, meta.UserID, text)
+}
+
+func commandName(text string) (string, bool) {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return "", false
+	}
+
+	cmd := fields[0]
+	if !strings.HasPrefix(cmd, "/") {
+		return "", false
+	}
+
+	if i := strings.Index(cmd, "@"); i >= 0 {
+		cmd = cmd[:i]
+	}
+
+	return strings.ToLower(cmd), true
 }
 
 func (p *Processor) savePage(ctx context.Context, chatID int, userID int64, pageURL string) (err error) {
