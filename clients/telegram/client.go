@@ -64,7 +64,7 @@ func (c *Client) Updates(ctx context.Context, offset int, limit int) (updates []
 	q.Add("offset", strconv.Itoa(offset))
 	q.Add("limit", strconv.Itoa(limit))
 
-	data, err := c.doRequest(ctx, getUpdatesMethod, q)
+	data, err := c.doGetRequest(ctx, getUpdatesMethod, q)
 	if err != nil {
 		return nil, err
 	}
@@ -87,11 +87,11 @@ func (c *Client) Updates(ctx context.Context, offset int, limit int) (updates []
 }
 
 func (c *Client) SendMessage(ctx context.Context, chatID int, text string) error {
-	q := url.Values{}
-	q.Add("chat_id", strconv.Itoa(chatID))
-	q.Add("text", text)
+	form := url.Values{}
+	form.Add("chat_id", strconv.Itoa(chatID))
+	form.Add("text", text)
 
-	data, err := c.doRequest(ctx, sendMessageMethod, q)
+	data, err := c.doPostFormRequest(ctx, sendMessageMethod, form)
 	if err != nil {
 		return e.Wrap("can't send message", err)
 	}
@@ -108,18 +108,39 @@ func (c *Client) SendMessage(ctx context.Context, chatID int, text string) error
 	return nil
 }
 
-func (c *Client) doRequest(ctx context.Context, method string, query url.Values) (data []byte, err error) {
+func (c *Client) doGetRequest(ctx context.Context, method string, query url.Values) ([]byte, error) {
+	return c.doRequest(ctx, http.MethodGet, method, query, nil, "")
+}
+
+func (c *Client) doPostFormRequest(ctx context.Context, method string, form url.Values) ([]byte, error) {
+	return c.doRequest(
+		ctx,
+		http.MethodPost,
+		method,
+		nil,
+		strings.NewReader(form.Encode()),
+		"application/x-www-form-urlencoded",
+	)
+}
+
+func (c *Client) doRequest(ctx context.Context, httpMethod string, method string, query url.Values, body io.Reader, contentType string) (data []byte, err error) {
 	defer func() { err = e.WrapIfErr("can't do request", err) }()
 
 	u := *c.baseURL
 	u.Path = path.Join(c.baseURL.Path, method)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, httpMethod, u.String(), body)
 	if err != nil {
 		return nil, err
 	}
 
-	req.URL.RawQuery = query.Encode()
+	if len(query) > 0 {
+		req.URL.RawQuery = query.Encode()
+	}
+
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -132,12 +153,12 @@ func (c *Client) doRequest(ctx context.Context, method string, query url.Values)
 		return nil, fmt.Errorf("telegram api returned status %s", resp.Status)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 
-	return body, nil
+	return responseBody, nil
 }
 
 func telegramAPIError(res apiResponse) error {
