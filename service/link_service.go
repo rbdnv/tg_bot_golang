@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"strings"
 
@@ -98,15 +99,6 @@ func (s *LinkService) RandomLink(ctx context.Context, userID int64) (string, err
 	return link, nil
 }
 
-func (s *LinkService) CountUserMessages(ctx context.Context, userID int64) (int, error) {
-	count, err := s.storage.CountUserMessages(ctx, userID)
-	if err != nil {
-		return 0, fmt.Errorf("count user messages: %w", err)
-	}
-
-	return count, nil
-}
-
 func NormalizeURL(rawLink string) (string, error) {
 	rawLink = strings.TrimSpace(rawLink)
 	if rawLink == "" {
@@ -118,14 +110,33 @@ func NormalizeURL(rawLink string) (string, error) {
 		return "", fmt.Errorf("%w: %v", ErrInvalidURL, err)
 	}
 
+	u.Scheme = strings.ToLower(u.Scheme)
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return "", fmt.Errorf("%w: only http and https URLs are supported", ErrInvalidURL)
 	}
 
-	if u.Host == "" {
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
 		return "", fmt.Errorf("%w: host is required", ErrInvalidURL)
 	}
 
+	u.Host = normalizedHost(u.Scheme, host, u.Port())
+	if u.Path == "/" {
+		u.Path = ""
+		u.RawPath = ""
+	}
 	u.Fragment = ""
 	return u.String(), nil
+}
+
+func normalizedHost(scheme string, host string, port string) string {
+	if port == "" {
+		return host
+	}
+
+	if (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
+		return host
+	}
+
+	return net.JoinHostPort(host, port)
 }

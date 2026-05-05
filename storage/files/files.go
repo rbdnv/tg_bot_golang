@@ -2,8 +2,11 @@ package files
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/gob"
 	"errors"
+	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -20,6 +23,11 @@ type Storage struct {
 }
 
 const defaultPerm = 0o774
+
+type pageRecord struct {
+	UserID int64
+	Link   string
+}
 
 func New(basePath string) *Storage {
 	return &Storage{
@@ -47,9 +55,8 @@ func (s *Storage) SaveLink(ctx context.Context, userID int64, link string) (err 
 	default:
 	}
 
-	page := &storage.Page{
+	page := &pageRecord{
 		UserID: userID,
-		URL:    link,
 		Link:   link,
 	}
 
@@ -109,7 +116,7 @@ func (s *Storage) GetRandomLink(ctx context.Context, userID int64) (link string,
 		return "", err
 	}
 
-	return firstNonEmpty(page.Link, page.URL), nil
+	return page.Link, nil
 }
 
 func (s *Storage) IncrementUserMessages(ctx context.Context, userID int64) (int, error) {
@@ -143,14 +150,14 @@ func (s *Storage) Close() error {
 	return nil
 }
 
-func (s *Storage) decodePage(filePath string) (*storage.Page, error) {
+func (s *Storage) decodePage(filePath string) (*pageRecord, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, e.Wrap("decode page", err)
 	}
 	defer func() { _ = f.Close() }()
 
-	var p storage.Page
+	var p pageRecord
 	if err := gob.NewDecoder(f).Decode(&p); err != nil {
 		return nil, e.Wrap("decode page", err)
 	}
@@ -158,22 +165,23 @@ func (s *Storage) decodePage(filePath string) (*storage.Page, error) {
 	return &p, nil
 }
 
-func fileName(p *storage.Page) (string, error) {
-	return p.Hash()
+func fileName(p *pageRecord) (string, error) {
+	h := sha1.New()
+
+	if _, err := io.WriteString(h, p.Link); err != nil {
+		return "", e.Wrap("can't calculate hash", err)
+	}
+
+	// Preserve the historical file naming scheme so existing file-based storage remains readable.
+	if _, err := io.WriteString(h, fmt.Sprintf("%d:", p.UserID)); err != nil {
+		return "", e.Wrap("can't calculate hash", err)
+	}
+
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 func userDir(userID int64) string {
 	return strconv.FormatInt(userID, 10)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-
-	return ""
 }
 
 var _ storage.Storage = (*Storage)(nil)

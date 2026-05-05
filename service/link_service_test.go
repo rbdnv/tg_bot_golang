@@ -17,6 +17,12 @@ func TestNormalizeURL(t *testing.T) {
 	}{
 		{name: "https url", raw: " https://example.com/path#fragment ", want: "https://example.com/path"},
 		{name: "http url", raw: "http://example.com", want: "http://example.com"},
+		{name: "upper case scheme", raw: "HTTP://example.com/path", want: "http://example.com/path"},
+		{name: "lowercases host", raw: "https://EXAMPLE.com/path", want: "https://example.com/path"},
+		{name: "removes default https port", raw: "https://example.com:443/path", want: "https://example.com/path"},
+		{name: "removes default http port", raw: "http://example.com:80/path", want: "http://example.com/path"},
+		{name: "keeps non default port", raw: "https://example.com:8443/path", want: "https://example.com:8443/path"},
+		{name: "removes root slash", raw: "https://example.com/", want: "https://example.com"},
 		{name: "missing scheme", raw: "example.com", wantErr: true},
 		{name: "unsupported scheme", raw: "ftp://example.com", wantErr: true},
 		{name: "empty", raw: "", wantErr: true},
@@ -99,11 +105,7 @@ func TestSaveLinkDuplicateIsIgnored(t *testing.T) {
 		t.Fatal("duplicate flag is false")
 	}
 
-	count, err := svc.CountUserMessages(ctx, 42)
-	if err != nil {
-		t.Fatalf("count messages: %v", err)
-	}
-
+	count := store.counts[42]
 	if count != 1 {
 		t.Fatalf("count = %d, want 1", count)
 	}
@@ -148,10 +150,6 @@ func (s *memoryStorage) GetRandomLink(ctx context.Context, userID int64) (string
 
 func (s *memoryStorage) IncrementUserMessages(ctx context.Context, userID int64) (int, error) {
 	s.counts[userID]++
-	return s.counts[userID], nil
-}
-
-func (s *memoryStorage) CountUserMessages(ctx context.Context, userID int64) (int, error) {
 	return s.counts[userID], nil
 }
 
